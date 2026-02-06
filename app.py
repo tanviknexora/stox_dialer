@@ -166,12 +166,9 @@ if stringee_file is not None and team_file is not None:
         # --- Build simple CRE pivot ---
         final_df_cre = simple_cre_pivot(dialers_df)
 
-        # --- Show results ---
+        # --- Show only CRE summary on dashboard ---
         st.subheader("CRE Summary")
-        st.dataframe(final_df_cre)
-
-        st.subheader("Raw Dialer Data (first 500 rows)")
-        st.dataframe(dialers_df.head(500))
+        st.dataframe(final_df_cre, use_container_width=True)
 
     except Exception as e:
         st.error(f"Error while processing file: {e}")
