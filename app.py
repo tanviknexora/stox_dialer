@@ -80,20 +80,19 @@ def smart_process(file1, file2, team_file):
     
     dialers = pd.DataFrame(dialers_list)
     
-    # PROPER INTERVALS
+    # ✅ CHRONOLOGICAL INTERVALS (0-8AM → 16+PM)
     def get_interval(h):
         if pd.isna(h): return 'Unknown'
         h = int(h)
-        if h < 8: return '0-8AM'
-        if h < 9: return '8-9AM'
-        if h < 10: return '9-10AM'
-        if h < 11: return '10-11AM'
-        if h < 12: return '11-12PM'
-        if h < 13: return '12-13PM'
-        if h < 14: return '13-14PM'
-        if h < 15: return '14-15PM'
-        if h < 16: return '15-16PM'
-        return '16+PM'
+        intervals = {
+            range(0,8): '0-8AM', range(8,9): '8-9AM', range(9,10): '9-10AM',
+            range(10,11): '10-11AM', range(11,12): '11-12PM', range(12,13): '12-1PM',
+            range(13,14): '1-2PM', range(14,15): '2-3PM', range(15,16): '3-4PM',
+            range(16,17): '4-5PM', range(17,18): '5-6PM', range(18,24): '6+PM'
+        }
+        for r, label in intervals.items():
+            if h in r: return label
+        return 'Unknown'
     
     dialers['Interval'] = dialers['hour'].apply(get_interval)
     
@@ -119,7 +118,7 @@ def smart_process(file1, file2, team_file):
     
     return final_df, dialers, debug
 
-# === 2 FILES UPLOAD (ORIGINAL FORMAT) ===
+# === 2 FILES UPLOAD ===
 col1, col2, col3 = st.columns([1,1,2])
 stringee_file1 = col1.file_uploader("📊 **Stringee File 1** (.xlsx)", type=['xlsx'])
 stringee_file2 = col2.file_uploader("📊 **Stringee File 2** (.xlsx)", type=['xlsx'])
@@ -148,25 +147,83 @@ if stringee_file1 and stringee_file2 and team_file:
         col3.metric("✅ Matched", debug['matched'])
         col4.metric("📈 Coverage", f"{debug['matched']/len(df)*100:.0f}%")
         
-        # === FILTERS ===
+        # === ✅ FIXED FILTERS WITH SESSION STATE ===
         col1, col2 = st.columns(2)
+        
+        # Initialize filter defaults
+        if 'selected_tl' not in st.session_state:
+            st.session_state.selected_tl = sorted(df['TL'].dropna().unique())[:3]
+        if 'selected_pool' not in st.session_state:
+            st.session_state.selected_pool = sorted(df['Pool'].dropna().unique())[:3]
+        
         tl_opts = sorted(df['TL'].dropna().unique())
         pool_opts = sorted(df['Pool'].dropna().unique())
         
-        selected_tl = col1.multiselect("👤 Team Lead", tl_opts, default=tl_opts[:3])
-        selected_pool = col2.multiselect("🏊 Pool", pool_opts, default=pool_opts[:3])
+        # ✅ FIXED: Use unique keys for multiselect
+        selected_tl = col1.multiselect(
+            "👤 Team Lead", 
+            tl_opts, 
+            default=st.session_state.selected_tl,
+            key="tl_filter_unique"
+        )
+        selected_pool = col2.multiselect(
+            "🏊 Pool", 
+            pool_opts, 
+            default=st.session_state.selected_pool,
+            key="pool_filter_unique"
+        )
         
-        # FILTER
-        filtered = df[df['TL'].isin(selected_tl) & df['Pool'].isin(selected_pool)]
-        st.success(f"🎯 **{len(filtered)} CREs** | **{int(filtered[call_cols].sum().sum()):,} calls**")
+        # Update session state
+        st.session_state.selected_tl = selected_tl
+        st.session_state.selected_pool = selected_pool
         
-        # TABLE
-        display_df = filtered[call_cols + ['Full Name', 'Pool', 'TL']].copy()
-        for col in call_cols:
+        # ✅ FIXED FILTER LOGIC - Handle empty selections
+        if not selected_tl:
+            selected_tl = df['TL'].dropna().unique()
+        if not selected_pool:
+            selected_pool = df['Pool'].dropna().unique()
+            
+        filtered = df[
+            df['TL'].isin(selected_tl) & 
+            df['Pool'].isin(selected_pool)
+        ].copy()
+        
+        filtered_dials = int(filtered[call_cols].sum().sum())
+        st.success(f"🎯 **{len(filtered)} CREs** | **{filtered_dials:,} calls**")
+        
+        # ✅ PERFECT COLUMN ORDER: Full Name | Pool | TL | Time Columns (Chronological)
+        st.subheader(f"📊 Hourly Breakdown ({len(filtered)} CREs)")
+        
+        # Define CHRONOLOGICAL order
+        time_order = ['0-8AM Calls', '8-9AM Calls', '9-10AM Calls', '10-11AM Calls', 
+                     '11-12PM Calls', '12-1PM Calls', '1-2PM Calls', '2-3PM Calls', 
+                     '3-4PM Calls', '4-5PM Calls', '5-6PM Calls', '6+PM Calls']
+        
+        # Reorder columns: Full Name, Pool, TL, then chronological time columns
+        available_time_cols = [col for col in time_order if col in filtered.columns]
+        display_cols = ['Full Name', 'Pool', 'TL'] + available_time_cols
+        
+        display_df = filtered[display_cols].copy()
+        
+        # Format numbers
+        for col in available_time_cols:
             display_df[col] = pd.to_numeric(display_df[col], errors='coerce').fillna(0).astype(int)
         
-        st.subheader(f"📊 Hourly Breakdown ({len(filtered)} CREs)")
-        st.dataframe(display_df, use_container_width=True, height=500)
+        # Highlight top performers
+        def highlight_top(df):
+            styles = pd.DataFrame('', index=df.index, columns=df.columns)
+            for col in available_time_cols:
+                if len(df) > 0:
+                    top_idx = df[col].idxmax()
+                    if pd.notna(top_idx):
+                        styles.loc[top_idx, col] = 'background-color: #4CAF50; color: white; font-weight: bold'
+            return styles
+        
+        styled_df = display_df.style.apply(highlight_top, axis=None).format({
+            col: '{:,.0f}' for col in available_time_cols
+        })
+        
+        st.dataframe(styled_df, use_container_width=True, height=500)
         
         # SIDEBAR
         with st.sidebar:
